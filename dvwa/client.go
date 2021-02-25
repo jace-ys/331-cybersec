@@ -79,7 +79,7 @@ func (c *Client) login() error {
 	}
 	defer resp.Body.Close()
 
-	if strings.Contains(string(body), "Database Setup") {
+	if !strings.Contains(string(body), "Welcome to Damn Vulnerable Web Application!") {
 		return fmt.Errorf("DVWA server not set up yet")
 	}
 

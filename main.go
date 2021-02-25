@@ -15,10 +15,12 @@ var (
 	dvwaAddr     = cli.Flag("addr", "Address of the DVWA server.").Required().String()
 	dvwaSecurity = cli.Flag("security", "Security level of the vulnerability to target. Must be one of [low, medium, high].").Default("low").Enum("low", "medium", "high")
 
-	sqliBlind        = cli.Command("sqli-blind", "Run the blind SQL injection exploit to crack a user's password hash.")
-	sqliBlindMode    = sqliBlind.Flag("mode", "Search mode to use for cracking the password hash.").Default("concurrent").Enum("concurrent", "binary")
-	sqliBlindWorkers = sqliBlind.Flag("workers", "Number of workers to use for concurrent search mode.").Default("10").Int()
-	sqliBlindUserID  = sqliBlind.Arg("user-id", "User ID to target. Must be between 1-5.").Required().Enum("1", "2", "3", "4", "5")
+	sqliCmd = cli.Command("sqli", "Run the SQL injection exploit to list all users and their passwords.")
+
+	sqliBlindCmd     = cli.Command("sqli-blind", "Run the blind SQL injection exploit to crack a user's password hash.")
+	sqliBlindMode    = sqliBlindCmd.Flag("mode", "Search mode to use for cracking the password hash.").Default("concurrent").Enum("concurrent", "binary")
+	sqliBlindWorkers = sqliBlindCmd.Flag("workers", "Number of workers to use for concurrent search mode.").Default("10").Int()
+	sqliBlindUserID  = sqliBlindCmd.Arg("user-id", "User ID to target. Must be between 1-5.").Required().Enum("1", "2", "3", "4", "5")
 
 	xssCmd  = cli.Command("xss", "Run the XSS server to receive a users' stolen cookies.")
 	xssPort = xssCmd.Flag("port", "Port to run the XSS reflection server on.").Default("8000").Int()
@@ -33,7 +35,9 @@ func main() {
 	}
 
 	switch cmd {
-	case sqliBlind.FullCommand():
+	case sqliCmd.FullCommand():
+		cli.FatalIfError(sqli.Run(client), cmd)
+	case sqliBlindCmd.FullCommand():
 		cli.FatalIfError(sqli.RunBlind(client, *sqliBlindUserID, *sqliBlindMode, *sqliBlindWorkers), cmd)
 	case xssCmd.FullCommand():
 		cli.FatalIfError(xss.Run(*xssPort), cmd)

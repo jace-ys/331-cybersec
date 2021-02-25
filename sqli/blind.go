@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	resultRe = regexp.MustCompile(`<pre>(.*)</pre>`)
-	charset  = []byte("0123456789abcdef")
+	charset       = []byte("0123456789abcdef")
+	blindResultRe = regexp.MustCompile(`<pre>(.*)</pre>`)
 )
 
 func RunBlind(client *dvwa.Client, userID, mode string, workers int) error {
@@ -228,7 +228,7 @@ func (g *BlindSQLGuesser) guess(position int, char byte, op string) (bool, error
 	}
 	defer resp.Body.Close()
 
-	matches := resultRe.FindSubmatch(body)
+	matches := blindResultRe.FindSubmatch(body)
 	if len(matches) < 2 {
 		return false, fmt.Errorf("could not get exploit result")
 	}
