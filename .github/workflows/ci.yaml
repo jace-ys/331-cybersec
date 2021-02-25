@@ -23,7 +23,7 @@ jobs:
 
       - name: Run linter
         run: |
-          make fmt
+          go fmt ./...
           git diff --exit-code --name-only
 
       - name: Compile binary
