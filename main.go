@@ -5,6 +5,7 @@ import (
 
 	"gopkg.in/alecthomas/kingpin.v2"
 
+	"github.com/jace-ys/cybersec/csrf"
 	"github.com/jace-ys/cybersec/dvwa"
 	"github.com/jace-ys/cybersec/sqli"
 	"github.com/jace-ys/cybersec/xss"
@@ -24,6 +25,9 @@ var (
 
 	xssCmd  = cli.Command("xss", "Run the XSS server to receive a users' stolen cookies.")
 	xssPort = xssCmd.Flag("port", "Port to run the XSS reflection server on.").Default("8000").Int()
+
+	csrfCmd  = cli.Command("csrf", "Run the CSRF web page to hijack a user's password.")
+	csrfPort = csrfCmd.Flag("port", "Port to run the CSRF web server on.").Default("8000").Int()
 )
 
 func main() {
@@ -41,5 +45,7 @@ func main() {
 		cli.FatalIfError(sqli.RunBlind(client, *sqliBlindUserID, *sqliBlindMode, *sqliBlindWorkers), cmd)
 	case xssCmd.FullCommand():
 		cli.FatalIfError(xss.Run(*xssPort), cmd)
+	case csrfCmd.FullCommand():
+		cli.FatalIfError(csrf.Run(*dvwaAddr, *dvwaSecurity, *csrfPort), cmd)
 	}
 }

